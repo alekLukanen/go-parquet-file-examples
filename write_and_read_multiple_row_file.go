@@ -15,10 +15,12 @@ import (
 	"github.com/apache/arrow/go/v14/parquet/pqarrow"
 )
 
-func WriteAndReadSimpleFile() error {
-	fmt.Println("writeAndReadSimpleFile()")
+func WriteAndReadMultipleRowFile() error {
+	fmt.Println("WriteAndReadMultipleRowFile()")
 
-	dataDir, err := os.MkdirTemp("", "WriteAndReadSimpleFile")
+	ctx := context.Background()
+
+	dataDir, err := os.MkdirTemp("", "WriteAndReadMultipleRowFile")
 	if err != nil {
 		return err
 	}
@@ -48,7 +50,7 @@ func WriteAndReadSimpleFile() error {
 		},
 		nil,
 	)
-	parquetWriteProps := parquet.NewWriterProperties()
+	parquetWriteProps := parquet.NewWriterProperties(parquet.WithMaxRowGroupLength(2))
 	arrowWriteProps := pqarrow.NewArrowWriterProperties()
 	parquetFileWriter, err := pqarrow.NewFileWriter(schema, file, parquetWriteProps, arrowWriteProps)
 	if err != nil {
@@ -56,39 +58,71 @@ func WriteAndReadSimpleFile() error {
 	}
 	defer parquetFileWriter.Close()
 
-	// create a record and write it to the file
 	pool := memory.NewGoAllocator()
-	b := array.NewRecordBuilder(pool, schema)
-	defer b.Release()
 
-	b.Field(0).(*array.Int32Builder).AppendValues([]int32{1, 2, 3, 4, 5, 6}, nil)
-	b.Field(0).(*array.Int32Builder).AppendValues([]int32{7, 8, 9, 10}, []bool{true, true, false, true})
-	b.Field(1).(*array.Float64Builder).AppendValues([]float64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, nil)
+	// create a record and write it to the file
+	b1 := array.NewRecordBuilder(pool, schema)
+	defer b1.Release()
 
-	rec := b.NewRecord()
-	defer rec.Release()
+	b1.Field(0).(*array.Int32Builder).AppendValues([]int32{1, 2, 3, 4, 5, 6}, nil)
+	b1.Field(0).(*array.Int32Builder).AppendValues([]int32{7, 8, 9, 10}, []bool{true, true, false, true})
+	b1.Field(1).(*array.Float64Builder).AppendValues([]float64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, nil)
 
-	for i, col := range rec.Columns() {
-		fmt.Printf("column[%d] %q: %v\n", i, rec.ColumnName(i), col)
+	rec1 := b1.NewRecord()
+	defer rec1.Release()
+
+	for i, col := range rec1.Columns() {
+		fmt.Printf("column[%d] %q: %v\n", i, rec1.ColumnName(i), col)
 	}
 
-	err = parquetFileWriter.Write(rec)
+	// write the record to the first row group
+	err = parquetFileWriter.Write(rec1)
 	if err != nil {
 		return err
 	}
 
-	ctx := context.Background()
+	// create a second record and write it to the second row group
+	b2 := array.NewRecordBuilder(pool, schema)
+	defer b2.Release()
 
-	// get the file size
+	b2.Field(0).(*array.Int32Builder).AppendValues([]int32{7, 8, 9, 10, 11, 2, 3, 5}, nil)
+	b2.Field(1).(*array.Float64Builder).AppendValues([]float64{20, 21, 22, 23, 24, 25, 26, 27.77}, nil)
+
+	rec2 := b2.NewRecord()
+	defer rec2.Release()
+
+	for i, col := range rec2.Columns() {
+		fmt.Printf("column[%d] %q: %v\n", i, rec2.ColumnName(i), col)
+	}
+
+	// write the record to the second row group
+	err = parquetFileWriter.Write(rec2)
+	if err != nil {
+		return err
+	}
+
+	// get the file size before closing the writer
 	fi, err = file.Stat()
 	if err != nil {
 		return err
 	}
-	fmt.Printf("The file is %d bytes long\n", fi.Size())
+	fmt.Printf("The file is %d bytes long before close\n", fi.Size())
 
 	// close the writer
 	parquetFileWriter.Close()
-	file.Close()
+
+	// get the file size after closing the writer
+	file, err = os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	fi, err = file.Stat()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("The file is %d bytes long after close\n", fi.Size())
 
 	// open the file for reading
 	fmt.Println("reading parquet file")
@@ -109,7 +143,10 @@ func WriteAndReadSimpleFile() error {
 		return err
 	}
 
-	recordReader, err := arrowFileReader.GetRecordReader(ctx, nil, nil)
+	fmt.Printf("number of row groups: %d\n", parquetFileReader.NumRowGroups())
+	fmt.Printf("number of rows: %d", parquetFileReader.NumRows())
+
+	recordReader, err := arrowFileReader.GetRecordReader(ctx, nil, []int{0, 5})
 	if err != nil {
 		return err
 	}
