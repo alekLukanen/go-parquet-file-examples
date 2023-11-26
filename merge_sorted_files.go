@@ -14,6 +14,7 @@ import (
 
 	"github.com/apache/arrow/go/v14/parquet"
 	parquetFileUtils "github.com/apache/arrow/go/v14/parquet/file"
+	"github.com/apache/arrow/go/v14/parquet/metadata"
 	"github.com/apache/arrow/go/v14/parquet/pqarrow"
 )
 
@@ -32,9 +33,9 @@ func MergeSortedFiles(fileSize, fileCount int) error {
 
 	fmt.Println(files)
 
-	pool := memory.NewGoAllocator()
+	// pool := memory.NewGoAllocator()
 	for _, filePath := range files {
-		PrintColumnStats(filePath, pool)
+		PrintColumnStats(filePath)
 	}
 
 	return nil
@@ -44,10 +45,8 @@ func MergeFilePair(filePath1, filePath2 string) (string, error) {
 	return "", nil
 }
 
-func PrintColumnStats(filePath string, pool memory.Allocator) error {
+func PrintColumnStats(filePath string) error {
 	fmt.Println("reading parquet file")
-
-	// ctx := context.Background()
 
 	parquetFileReader, err := parquetFileUtils.OpenParquetFile(filePath, false)
 	if err != nil {
@@ -55,87 +54,29 @@ func PrintColumnStats(filePath string, pool memory.Allocator) error {
 	}
 
 	fmt.Printf("number of row groups: %d\n", parquetFileReader.NumRowGroups())
-	fmt.Printf("number of rows: %d", parquetFileReader.NumRows())
+	fmt.Printf("number of rows: %d\n", parquetFileReader.NumRows())
+
+	minValue, maxValue, _ := GetFileMaxAndMin(parquetFileReader)
+
+	fmt.Printf("min: %d\n", minValue)
+	fmt.Printf("max: %d\n", maxValue)
+
+	return nil
+}
+
+func GetFileMaxAndMin(parquetFileReader *parquetFileUtils.Reader) (interface{}, interface{}, parquet.Type) {
+	schema := parquetFileReader.MetaData().Schema
+	columnType := schema.Column(0).PhysicalType()
 
 	fileMetaData := parquetFileReader.MetaData()
 	rowGroup := (*fileMetaData).RowGroups[0]
-	stats := rowGroup.Columns[0].MetaData.Statistics
+	columnMetaData := rowGroup.Columns[0].MetaData
+	stats := columnMetaData.Statistics
 
-	fmt.Printf("min: %d\n", stats.MinValue)
-	fmt.Printf("max: %d\n", stats.MaxValue)
+	minValue := metadata.GetStatValue(columnType, stats.MinValue)
+	maxValue := metadata.GetStatValue(columnType, stats.MaxValue)
 
-	/*
-
-		parquetRowGroupReader := parquetFileReader.RowGroup(0)
-		rowGroupMetaData := parquetRowGroupReader.MetaData()
-
-		columnChunkMetaData, err := rowGroupMetaData.ColumnChunk(0)
-		if err != nil {
-			return err
-		}
-
-		columnChunkMetaData.
-
-
-		stats, err := columnChunkMetaData.Statistics()
-		if err != nil {
-			return err
-		}
-
-		if !stats.HasMinMax() {
-			return errors.New("column chunck missing stats")
-		}
-
-		encodedStats, err := stats.Encode()
-		if err != nil {
-			return err
-		}
-
-		encodedStats.Max()
-
-		parquetReadProps := pqarrow.ArrowReadProperties{
-			Parallel:  false,
-			BatchSize: 1024 * 10,
-		}
-		parquetReadProps.SetReadDict(0, true)
-		parquetReadProps.SetReadDict(1, true)
-		arrowFileReader, err := pqarrow.NewFileReader(parquetFileReader, parquetReadProps, pool)
-		if err != nil {
-			return err
-		}
-
-		// Get the schema
-		schema, err := arrowFileReader.Schema()
-		if err != nil {
-			return err
-		}
-
-		// get the column reader
-		columnReader, err := arrowFileReader.GetColumn(ctx, 0)
-		if err != nil {
-			return err
-		}
-
-
-		columnReader.Field()
-
-		// Get the column statistics
-		stats, err := columnReader.a()
-		if err != nil {
-			return err
-		}
-
-		// Access statistics information
-		minValue := stats.Min()
-		maxValue := stats.Max()
-		nullCount := stats.NullCount()
-
-		// Print or use the statistics information as needed
-		log.Printf("Min Value: %v, Max Value: %v, Null Count: %v", minValue, maxValue, nullCount)
-
-	*/
-
-	return nil
+	return minValue, maxValue, columnType
 }
 
 func CreateSortedFiles(fileSize int, fileCount int, dataDir string) ([]string, error) {
@@ -179,7 +120,7 @@ func CreateSortedFile(fileIndex int, fileSize int, dataDir string) (string, erro
 		},
 		nil,
 	)
-	parquetWriteProps := parquet.NewWriterProperties(parquet.WithMaxRowGroupLength(10), parquet.WithStatsFor("A", true))
+	parquetWriteProps := parquet.NewWriterProperties(parquet.WithMaxRowGroupLength(100_000), parquet.WithStatsFor("A", true))
 	arrowWriteProps := pqarrow.NewArrowWriterProperties()
 	parquetFileWriter, err := pqarrow.NewFileWriter(schema, file, parquetWriteProps, arrowWriteProps)
 	if err != nil {
