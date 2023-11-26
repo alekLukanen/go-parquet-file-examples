@@ -19,7 +19,7 @@ func TestWriteAndReadMultipleRowFile(t *testing.T) {
 }
 
 func TestMergeSortedFiles(t *testing.T) {
-	err := MergeSortedFiles(10, 3)
+	err := MergeSortedFiles(10000, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
